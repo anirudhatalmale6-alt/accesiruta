@@ -962,11 +962,7 @@ var App = (function () {
       if (routeData.distance > 2000) {
         transitBtn.style.display = 'flex';
         transitBtn.onclick = function () {
-          var origin = routeData.originLat + ',' + routeData.originLng;
-          var dest = routeData.destLat + ',' + routeData.destLng;
-          var url = 'https://www.google.com/maps/dir/?api=1&origin=' + origin +
-            '&destination=' + dest + '&travelmode=transit';
-          window.open(url, '_blank');
+          fetchTransitRoute(routeData);
         };
       } else {
         transitBtn.style.display = 'none';
@@ -1094,11 +1090,7 @@ var App = (function () {
       if (route.distance > 2000) {
         rdTransit.style.display = 'block';
         rdTransit.onclick = function () {
-          var origin = route.originLat + ',' + route.originLng;
-          var dest = route.destLat + ',' + route.destLng;
-          var url = 'https://www.google.com/maps/dir/?api=1&origin=' + origin +
-            '&destination=' + dest + '&travelmode=transit';
-          window.open(url, '_blank');
+          fetchTransitRoute(route);
         };
       } else {
         rdTransit.style.display = 'none';
@@ -1148,6 +1140,139 @@ var App = (function () {
     if (hours < 24) return hours + 'h';
     var days = Math.floor(hours / 24);
     return days + 'd';
+  }
+
+  /* =============================================
+     TRANSIT ROUTING (Transitous API)
+     ============================================= */
+
+  function fetchTransitRoute(routeData) {
+    showToast('Buscando transporte publico...');
+
+    var url = 'https://api.transitous.org/api/v1/plan?fromPlace=' +
+      routeData.originLat + ',' + routeData.originLng +
+      '&toPlace=' + routeData.destLat + ',' + routeData.destLng +
+      '&numItineraries=5&arriveBy=false';
+
+    fetch(url)
+      .then(function (res) {
+        if (!res.ok) throw new Error('Error de red');
+        return res.json();
+      })
+      .then(function (data) {
+        var itineraries = data.itineraries || [];
+        if (itineraries.length === 0) {
+          showToast('No se encontraron rutas de transporte publico en esta zona');
+          return;
+        }
+        showTransitResults(itineraries, routeData.destName || 'Destino');
+      })
+      .catch(function (err) {
+        console.warn('Error buscando transporte:', err);
+        showToast('Error al buscar transporte publico. Intenta de nuevo.');
+      });
+  }
+
+  var TRANSIT_MODE_INFO = {
+    WALK: { icon: '\uD83D\uDEB6', label: 'Caminar', color: '#6B7280' },
+    SUBWAY: { icon: '\uD83D\uDE87', label: 'Metro', color: '#EF4444' },
+    BUS: { icon: '\uD83D\uDE8C', label: 'Bus', color: '#3B82F6' },
+    TRAM: { icon: '\uD83D\uDE8A', label: 'Tranvia', color: '#8B5CF6' },
+    RAIL: { icon: '\uD83D\uDE82', label: 'Tren', color: '#059669' },
+    FERRY: { icon: '\u26F4\uFE0F', label: 'Ferry', color: '#0EA5E9' },
+    CABLE_CAR: { icon: '\uD83D\uDEA0', label: 'Teleferico', color: '#F59E0B' },
+  };
+
+  function showTransitResults(itineraries, destName) {
+    // Build the transit overlay
+    var overlay = document.getElementById('transit-overlay');
+    if (!overlay) return;
+
+    var html = '<div class="transit-header">' +
+      '<button class="back-btn" id="transit-close" aria-label="Cerrar">\u2190</button>' +
+      '<h2>Transporte publico</h2>' +
+      '</div>' +
+      '<p class="transit-subtitle">Opciones para llegar a <strong>' + escapeHtml(destName) + '</strong></p>' +
+      '<div class="transit-options">';
+
+    itineraries.forEach(function (it, idx) {
+      var totalMin = Math.ceil((it.duration || 0) / 60);
+      var transfers = it.transfers || 0;
+      var legs = it.legs || [];
+
+      // Build legs summary (icons)
+      var legsSummary = '';
+      var legsDetail = '';
+      legs.forEach(function (leg, lIdx) {
+        var mode = leg.mode || 'WALK';
+        var info = TRANSIT_MODE_INFO[mode] || TRANSIT_MODE_INFO.WALK;
+        var route = leg.route || '';
+        var routeColor = leg.routeColor ? '#' + leg.routeColor : info.color;
+
+        if (mode !== 'WALK') {
+          legsSummary += '<span class="transit-leg-badge" style="background:' + routeColor + '">' +
+            info.icon + ' ' + escapeHtml(route || info.label) + '</span>';
+        }
+
+        // Detailed leg info
+        var fromName = (leg.from && leg.from.name) ? leg.from.name : '';
+        var toName = (leg.to && leg.to.name) ? leg.to.name : '';
+        var legMin = Math.ceil((leg.duration || 0) / 60);
+        var startTime = leg.startTime ? formatTransitTime(leg.startTime) : '';
+        var endTime = leg.endTime ? formatTransitTime(leg.endTime) : '';
+
+        if (mode === 'WALK' && legMin < 2) return; // Skip very short walks
+
+        legsDetail += '<div class="transit-leg">' +
+          '<div class="transit-leg-icon" style="background:' + routeColor + '">' + info.icon + '</div>' +
+          '<div class="transit-leg-info">';
+
+        if (mode === 'WALK') {
+          legsDetail += '<div class="transit-leg-mode">Caminar ' + legMin + ' min</div>';
+          if (fromName && fromName !== 'START') legsDetail += '<div class="transit-leg-stop">Desde ' + escapeHtml(fromName) + '</div>';
+        } else {
+          legsDetail += '<div class="transit-leg-mode">' + escapeHtml(info.label) +
+            (route ? ' <strong>' + escapeHtml(route) + '</strong>' : '') + '</div>';
+          if (fromName) legsDetail += '<div class="transit-leg-stop">' + (startTime ? startTime + ' ' : '') + escapeHtml(fromName) + '</div>';
+          if (toName) legsDetail += '<div class="transit-leg-stop">' + (endTime ? endTime + ' ' : '') + escapeHtml(toName) + '</div>';
+          var numStops = leg.intermediateStops ? leg.intermediateStops.length : 0;
+          if (numStops > 0) legsDetail += '<div class="transit-leg-stops">' + numStops + ' parada' + (numStops > 1 ? 's' : '') + ' (' + legMin + ' min)</div>';
+        }
+
+        legsDetail += '</div></div>';
+      });
+
+      if (!legsSummary) legsSummary = '<span class="transit-leg-badge" style="background:#6B7280">\uD83D\uDEB6 Solo a pie</span>';
+
+      html += '<div class="transit-option" data-idx="' + idx + '">' +
+        '<div class="transit-option-header">' +
+        '<div class="transit-option-time">' + totalMin + ' min</div>' +
+        '<div class="transit-option-transfers">' + (transfers > 0 ? transfers + ' transbordo' + (transfers > 1 ? 's' : '') : 'Directo') + '</div>' +
+        '</div>' +
+        '<div class="transit-option-legs">' + legsSummary + '</div>' +
+        '<details class="transit-option-details">' +
+        '<summary>Ver paradas</summary>' +
+        '<div class="transit-legs-detail">' + legsDetail + '</div>' +
+        '</details>' +
+        '</div>';
+    });
+
+    html += '</div>';
+
+    overlay.innerHTML = html;
+    overlay.classList.add('visible');
+
+    // Close button
+    document.getElementById('transit-close').addEventListener('click', function () {
+      overlay.classList.remove('visible');
+    });
+  }
+
+  function formatTransitTime(epochMs) {
+    var d = new Date(epochMs);
+    var h = d.getHours();
+    var m = d.getMinutes();
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
 
   function escapeHtml(str) {

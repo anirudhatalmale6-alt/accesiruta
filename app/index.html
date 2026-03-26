@@ -27,7 +27,7 @@
       if ('caches' in window) {
         caches.keys().then(function(names) {
           names.forEach(function(name) {
-            if (name !== 'accesiruta-v9') caches.delete(name);
+            if (name !== 'accesiruta-v10') caches.delete(name);
           });
         });
       }
@@ -524,6 +524,9 @@
       </div>
 
     </section>
+
+    <!-- Transit Overlay -->
+    <div id="transit-overlay" class="transit-overlay" role="dialog" aria-label="Opciones de transporte publico"></div>
 
     <!-- ============================================
          BOTTOM NAVIGATION
