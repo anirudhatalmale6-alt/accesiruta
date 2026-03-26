@@ -86,8 +86,9 @@
 
         <div class="search-bar" role="search">
           <span class="search-icon" aria-hidden="true">&#128269;</span>
-          <input type="text" placeholder="Buscar un lugar accesible..." aria-label="Buscar lugar accesible" id="home-search">
+          <input type="text" placeholder="Buscar un lugar accesible..." aria-label="Buscar lugar accesible" id="home-search" autocomplete="off">
         </div>
+        <div class="search-results-dropdown" id="home-search-results" role="listbox" aria-label="Resultados de busqueda"></div>
       </div>
 
       <!-- Quick Actions -->
@@ -161,6 +162,16 @@
         <button class="header-icon" aria-label="Filtrar marcadores" onclick="App.showToast('Filtros proximamente')">&#9881;&#65039;</button>
       </div>
 
+      <!-- Map Search Bar -->
+      <div class="map-search-wrapper">
+        <div class="search-bar map-search-bar" role="search">
+          <span class="search-icon" aria-hidden="true">&#128269;</span>
+          <input type="text" placeholder="Buscar destino..." aria-label="Buscar destino en el mapa" id="map-search" autocomplete="off">
+          <button class="search-clear-btn" id="map-search-clear" aria-label="Limpiar busqueda" style="display:none;">&times;</button>
+        </div>
+        <div class="search-results-dropdown" id="map-search-results" role="listbox" aria-label="Resultados de busqueda"></div>
+      </div>
+
       <div class="map-container">
         <div id="google-map" role="img" aria-label="Mapa de Google con puntos de accesibilidad"></div>
 
@@ -182,6 +193,37 @@
 
         <!-- Center on me FAB -->
         <button class="map-fab" onclick="MapModule.centerOnUser()" aria-label="Centrar en mi ubicacion">&#128205;</button>
+
+        <!-- Route Info Panel -->
+        <div class="route-panel" id="route-panel" style="display:none;">
+          <div class="route-panel-header">
+            <div class="route-panel-stats">
+              <div class="rp-stat">
+                <span class="rp-stat-value" id="rp-distance">--</span>
+                <span class="rp-stat-label">Distancia</span>
+              </div>
+              <div class="rp-stat">
+                <span class="rp-stat-value" id="rp-time">--</span>
+                <span class="rp-stat-label">Tiempo</span>
+              </div>
+              <div class="rp-stat">
+                <span class="rp-stat-value" id="rp-score">--</span>
+                <span class="rp-stat-label">Accesibilidad</span>
+              </div>
+            </div>
+            <p class="rp-terrain-summary" id="rp-terrain-summary"></p>
+          </div>
+          <div class="route-panel-actions">
+            <button class="btn btn-primary rp-btn" id="rp-start-nav" aria-label="Iniciar navegacion">Iniciar navegacion</button>
+            <button class="btn btn-outline rp-btn" id="rp-view-detail" aria-label="Ver detalle de ruta">Ver detalle</button>
+            <button class="btn btn-ghost rp-btn rp-cancel" id="rp-cancel" aria-label="Cancelar ruta">Cancelar</button>
+          </div>
+          <!-- Turn-by-turn instructions (collapsible) -->
+          <details class="rp-directions" id="rp-directions">
+            <summary class="rp-directions-toggle">Instrucciones paso a paso</summary>
+            <ol class="rp-directions-list" id="rp-directions-list"></ol>
+          </details>
+        </div>
       </div>
 
     </section>
@@ -197,28 +239,32 @@
           <h2>Ruta accesible</h2>
         </div>
 
+        <!-- From / To -->
+        <div class="route-from-to" id="route-from-to">
+          <div class="rft-row"><span class="rft-dot rft-origin"></span><span class="rft-text" id="route-origin-name">Tu ubicacion</span></div>
+          <div class="rft-line"></div>
+          <div class="rft-row"><span class="rft-dot rft-dest"></span><span class="rft-text" id="route-dest-name">Destino</span></div>
+        </div>
+
         <div class="route-info-cards">
           <div class="route-info-card">
-            <div class="ric-value">1.2km</div>
+            <div class="ric-value" id="rd-distance">--</div>
             <div class="ric-label">Distancia</div>
           </div>
           <div class="route-info-card">
-            <div class="ric-value">18min</div>
+            <div class="ric-value" id="rd-time">--</div>
             <div class="ric-label">Tiempo</div>
           </div>
           <div class="route-info-card">
-            <div class="ric-value">4.2&#9733;</div>
+            <div class="ric-value" id="rd-score">--</div>
             <div class="ric-label">Accesibilidad</div>
           </div>
         </div>
 
         <div class="route-accessibility">
           <h3>&#9855; Caracteristicas de accesibilidad</h3>
-          <div class="accessibility-tags">
-            <span class="a11y-tag">&#9855; Sin escalones</span>
-            <span class="a11y-tag">&#129681; Bancos cada 200m</span>
-            <span class="a11y-tag">&#128678; Semaforos sonoros</span>
-            <span class="a11y-tag">&#128727; Ascensor disponible</span>
+          <div class="accessibility-tags" id="rd-a11y-tags">
+            <span class="a11y-tag" style="color:var(--gray-400);border-color:var(--gray-300);">Busca una ruta para ver datos</span>
           </div>
         </div>
 
@@ -226,6 +272,8 @@
         <div class="route-reports-list" id="route-reports">
           <p style="color:var(--gray-400);font-size:14px;text-align:center;">No hay reportes en esta ruta aun.</p>
         </div>
+
+        <button class="btn btn-primary" id="rd-center-route" style="margin-top:16px;">Iniciar navegacion</button>
       </div>
 
     </section>

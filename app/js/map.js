@@ -1,6 +1,7 @@
 /* ============================================
    AccesiRuta — Map Module
-   Leaflet + OpenStreetMap integration with accessibility markers
+   Leaflet + OpenStreetMap integration with accessibility markers,
+   search integration, OSRM routing, accessibility scoring
    ============================================ */
 
 var MapModule = (function () {
@@ -13,22 +14,39 @@ var MapModule = (function () {
   var userPosition = null;
   var mapInitialized = false;
 
+  // Route state
+  var routePolyline = null;
+  var destinationMarker = null;
+  var routeReportMarkers = [];
+  var currentRoute = null; // { origin, dest, distance, duration, score, geometry, steps, nearbyReports }
+
   // Marker color config per report type
   var MARKER_CONFIG = {
-    rampa: { color: '#0EA5E9', emoji: '♿', label: 'Rampa' },
-    escaleras: { color: '#EAB308', emoji: '🪜', label: 'Escaleras' },
-    banco: { color: '#22C55E', emoji: '🪑', label: 'Banco' },
-    pendiente: { color: '#EF4444', emoji: '⛰️', label: 'Pendiente' },
-    obstaculo: { color: '#F97316', emoji: '🚧', label: 'Obstáculo' },
+    rampa: { color: '#0EA5E9', emoji: '\u267F', label: 'Rampa' },
+    escaleras: { color: '#EAB308', emoji: '\uD83E\uDE9C', label: 'Escaleras' },
+    banco: { color: '#22C55E', emoji: '\uD83E\uDE91', label: 'Banco' },
+    pendiente: { color: '#EF4444', emoji: '\u26F0\uFE0F', label: 'Pendiente' },
+    obstaculo: { color: '#F97316', emoji: '\uD83D\uDEA7', label: 'Obstaculo' },
   };
 
-  function createMarkerIcon(color, emoji) {
+  function createMarkerIcon(color, emoji, size) {
+    size = size || 40;
     return L.divIcon({
       className: 'custom-marker',
-      html: '<div style="background:' + color + ';width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);">' + emoji + '</div>',
-      iconSize: [40, 40],
-      iconAnchor: [20, 20],
-      popupAnchor: [0, -24],
+      html: '<div style="background:' + color + ';width:' + size + 'px;height:' + size + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:' + Math.round(size * 0.5) + 'px;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.3);">' + emoji + '</div>',
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+      popupAnchor: [0, -(size / 2 + 4)],
+    });
+  }
+
+  function createDestinationIcon() {
+    return L.divIcon({
+      className: 'custom-marker dest-marker',
+      html: '<div class="dest-marker-icon"><span>\uD83D\uDCCD</span></div>',
+      iconSize: [44, 44],
+      iconAnchor: [22, 44],
+      popupAnchor: [0, -48],
     });
   }
 
@@ -82,8 +100,8 @@ var MapModule = (function () {
   /* --- Demo Markers for first-time experience --- */
   function addDemoMarkers(center) {
     var demoData = [
-      { type: 'rampa', lat: center.lat + 0.002, lng: center.lng + 0.001, rating: 5, comment: 'Rampa en buen estado, inclinación adecuada' },
-      { type: 'escaleras', lat: center.lat - 0.001, lng: center.lng + 0.003, rating: 2, comment: 'Escaleras sin barandilla, precaución' },
+      { type: 'rampa', lat: center.lat + 0.002, lng: center.lng + 0.001, rating: 5, comment: 'Rampa en buen estado, inclinacion adecuada' },
+      { type: 'escaleras', lat: center.lat - 0.001, lng: center.lng + 0.003, rating: 2, comment: 'Escaleras sin barandilla, precaucion' },
       { type: 'banco', lat: center.lat + 0.001, lng: center.lng - 0.002, rating: 4, comment: 'Banco con respaldo, zona sombreada' },
       { type: 'pendiente', lat: center.lat - 0.002, lng: center.lng - 0.001, rating: 3, comment: 'Cuesta moderada, 200m de longitud' },
       { type: 'rampa', lat: center.lat + 0.003, lng: center.lng - 0.003, rating: 4, comment: 'Entrada accesible al parque' },
@@ -100,7 +118,7 @@ var MapModule = (function () {
 
       var stars = '';
       for (var i = 0; i < 5; i++) {
-        stars += i < d.rating ? '★' : '☆';
+        stars += i < d.rating ? '\u2605' : '\u2606';
       }
 
       marker.bindPopup(
@@ -143,7 +161,7 @@ var MapModule = (function () {
       weight: 3,
     }).addTo(map);
 
-    userMarker.bindPopup('<strong>Tu ubicación</strong>');
+    userMarker.bindPopup('<strong>Tu ubicacion</strong>');
   }
 
   /* --- Set User Position --- */
@@ -182,7 +200,7 @@ var MapModule = (function () {
 
     var config = MARKER_CONFIG[report.type] || {
       color: '#6B7280',
-      emoji: '📍',
+      emoji: '\uD83D\uDCCD',
       label: 'Otro',
     };
 
@@ -191,7 +209,7 @@ var MapModule = (function () {
 
     var stars = '';
     for (var i = 0; i < 5; i++) {
-      stars += i < report.rating ? '★' : '☆';
+      stars += i < report.rating ? '\u2605' : '\u2606';
     }
     var timeAgo = typeof App !== 'undefined' ? App.getTimeAgo(report.timestamp) : '';
 
@@ -207,6 +225,176 @@ var MapModule = (function () {
     );
 
     markers.push(marker);
+  }
+
+  /* --- Destination Marker --- */
+  function addDestinationMarker(lat, lng, name) {
+    removeDestinationMarker();
+    if (!map) return;
+
+    var icon = createDestinationIcon();
+    destinationMarker = L.marker([lat, lng], { icon: icon }).addTo(map);
+    destinationMarker.bindPopup('<strong>' + (name || 'Destino') + '</strong>').openPopup();
+  }
+
+  function removeDestinationMarker() {
+    if (destinationMarker && map) {
+      map.removeLayer(destinationMarker);
+      destinationMarker = null;
+    }
+  }
+
+  /* --- Fly To Location --- */
+  function flyTo(lat, lng, zoom) {
+    if (!map) return;
+    zoom = zoom || 16;
+    map.flyTo([lat, lng], zoom, { duration: 1 });
+  }
+
+  /* --- Route Drawing --- */
+  function drawRoute(geojsonCoords) {
+    clearRoute();
+    if (!map || !geojsonCoords || !geojsonCoords.length) return;
+
+    // GeoJSON coordinates are [lng, lat], Leaflet needs [lat, lng]
+    var latLngs = geojsonCoords.map(function (c) {
+      return [c[1], c[0]];
+    });
+
+    routePolyline = L.polyline(latLngs, {
+      color: '#0EA5E9',
+      weight: 5,
+      opacity: 0.85,
+      dashArray: '10, 6',
+      lineCap: 'round',
+      lineJoin: 'round',
+    }).addTo(map);
+
+    // Fit map to route bounds with padding
+    map.fitBounds(routePolyline.getBounds(), { padding: [50, 50] });
+  }
+
+  function clearRoute() {
+    if (routePolyline && map) {
+      map.removeLayer(routePolyline);
+      routePolyline = null;
+    }
+    // Clear route-specific report markers
+    routeReportMarkers.forEach(function (m) {
+      if (map) map.removeLayer(m);
+    });
+    routeReportMarkers = [];
+  }
+
+  /* --- Clear All Route Data --- */
+  function clearAllRouteData() {
+    clearRoute();
+    removeDestinationMarker();
+    currentRoute = null;
+
+    // Hide route panel
+    var panel = document.getElementById('route-panel');
+    if (panel) panel.style.display = 'none';
+  }
+
+  /* --- Find Reports Near Route --- */
+  function findReportsNearRoute(routeCoords, radiusMeters) {
+    radiusMeters = radiusMeters || 100;
+    if (!routeCoords || !routeCoords.length) return [];
+    if (typeof Reports === 'undefined') return [];
+
+    var allReports = Reports.getAll();
+    // Also add demo-like data from localStorage
+    var nearbyReports = [];
+    var radiusKm = radiusMeters / 1000;
+
+    allReports.forEach(function (report) {
+      // Check if any point on route is within radius of this report
+      for (var i = 0; i < routeCoords.length; i += 5) { // Sample every 5th point for performance
+        var rLat = routeCoords[i][1];
+        var rLng = routeCoords[i][0];
+        var dist = haversineDistance(report.lat, report.lng, rLat, rLng);
+        if (dist <= radiusKm) {
+          nearbyReports.push(report);
+          break;
+        }
+      }
+    });
+
+    return nearbyReports;
+  }
+
+  /* --- Show Nearby Report Markers (larger) --- */
+  function highlightRouteReports(reports) {
+    // Clear previous highlights
+    routeReportMarkers.forEach(function (m) {
+      if (map) map.removeLayer(m);
+    });
+    routeReportMarkers = [];
+
+    reports.forEach(function (report) {
+      var config = MARKER_CONFIG[report.type] || { color: '#6B7280', emoji: '\uD83D\uDCCD', label: 'Otro' };
+      var icon = createMarkerIcon(config.color, config.emoji, 50); // Larger size
+      var marker = L.marker([report.lat, report.lng], { icon: icon, zIndexOffset: 500 }).addTo(map);
+
+      var stars = '';
+      for (var j = 0; j < 5; j++) {
+        stars += j < report.rating ? '\u2605' : '\u2606';
+      }
+      marker.bindPopup(
+        '<div style="min-width:180px;font-family:-apple-system,sans-serif;">' +
+        '<div style="font-size:18px;margin-bottom:4px;">' + config.emoji + ' <strong>' + config.label + '</strong> (en ruta)</div>' +
+        '<div style="color:#EAB308;font-size:16px;">' + stars + '</div>' +
+        '<p style="font-size:13px;color:#4B5563;margin:6px 0 0;">' + (report.comment || 'Sin comentario') + '</p>' +
+        '</div>'
+      );
+      routeReportMarkers.push(marker);
+    });
+  }
+
+  /* --- Calculate Accessibility Score --- */
+  function calculateAccessibilityScore(nearbyReports) {
+    var score = 3.0;
+    var counts = { rampa: 0, escaleras: 0, banco: 0, pendiente: 0, obstaculo: 0 };
+
+    nearbyReports.forEach(function (r) {
+      if (counts.hasOwnProperty(r.type)) {
+        counts[r.type]++;
+      }
+      switch (r.type) {
+        case 'rampa':
+        case 'banco':
+          score += 0.3;
+          break;
+        case 'obstaculo':
+        case 'escaleras':
+          score -= 0.5;
+          break;
+        case 'pendiente':
+          score -= 0.3;
+          break;
+      }
+    });
+
+    // Cap between 1 and 5
+    score = Math.max(1, Math.min(5, score));
+    score = Math.round(score * 10) / 10;
+
+    return { score: score, counts: counts };
+  }
+
+  /* --- Get Map Instance --- */
+  function getMap() {
+    return map;
+  }
+
+  /* --- Get/Set Current Route --- */
+  function getCurrentRoute() {
+    return currentRoute;
+  }
+
+  function setCurrentRoute(route) {
+    currentRoute = route;
   }
 
   /* --- On Screen Show --- */
@@ -229,6 +417,18 @@ var MapModule = (function () {
     if (offlineEl) offlineEl.style.display = 'flex';
   }
 
+  /* --- Haversine --- */
+  function haversineDistance(lat1, lng1, lat2, lng2) {
+    var R = 6371;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLng = (lng2 - lng1) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
   /* --- Public API --- */
   return {
     initMap: initMap,
@@ -236,6 +436,18 @@ var MapModule = (function () {
     setUserPosition: setUserPosition,
     centerOnUser: centerOnUser,
     loadReportMarkers: loadReportMarkers,
+    flyTo: flyTo,
+    addDestinationMarker: addDestinationMarker,
+    removeDestinationMarker: removeDestinationMarker,
+    drawRoute: drawRoute,
+    clearRoute: clearRoute,
+    clearAllRouteData: clearAllRouteData,
+    findReportsNearRoute: findReportsNearRoute,
+    highlightRouteReports: highlightRouteReports,
+    calculateAccessibilityScore: calculateAccessibilityScore,
+    getMap: getMap,
+    getCurrentRoute: getCurrentRoute,
+    setCurrentRoute: setCurrentRoute,
   };
 })();
 
