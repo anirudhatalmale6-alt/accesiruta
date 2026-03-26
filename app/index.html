@@ -17,6 +17,14 @@
   <title>AccesiRuta — Tu camino accesible</title>
 
   <link rel="stylesheet" href="css/styles.css">
+  <script>
+    // Force service worker update on page load
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(registrations) {
+        registrations.forEach(function(reg) { reg.update(); });
+      });
+    }
+  </script>
 </head>
 <body>
 
