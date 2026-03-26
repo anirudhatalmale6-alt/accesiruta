@@ -3,7 +3,7 @@
    Cache-first for app assets, network-first for APIs
    ============================================ */
 
-var CACHE_VERSION = 'accesiruta-v7';
+var CACHE_VERSION = 'accesiruta-v8';
 var APP_SHELL_FILES = [
   './',
   './index.html',
@@ -76,7 +76,13 @@ self.addEventListener('fetch', function (event) {
     return;
   }
 
-  // Cache-first for app assets (CSS, JS, images)
+  // Network-first for JS/CSS (ensures updates arrive immediately)
+  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    event.respondWith(networkFirst(event.request));
+    return;
+  }
+
+  // Cache-first for static assets (images, fonts, manifest)
   event.respondWith(cacheFirst(event.request));
 });
 

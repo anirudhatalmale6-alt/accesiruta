@@ -678,7 +678,7 @@ var App = (function () {
 
     var url = 'https://nominatim.openstreetmap.org/search?q=' +
       encodeURIComponent(query) +
-      '&format=json&limit=5&countrycodes=es&accept-language=es&addressdetails=1';
+      '&format=json&limit=8&accept-language=es&addressdetails=1';
 
     fetch(url, {
       headers: {
@@ -965,11 +965,18 @@ var App = (function () {
     var startBtn = document.getElementById('rp-start-nav');
     if (startBtn) {
       startBtn.addEventListener('click', function () {
-        showToast('Navegacion iniciada. Sigue la linea azul.');
-        // Center on route
-        var route = MapModule.getCurrentRoute();
-        if (route) {
-          MapModule.flyTo(route.originLat, route.originLng, 17);
+        if (MapModule.isNavigating()) {
+          MapModule.stopNavigation();
+          startBtn.textContent = 'Iniciar navegacion';
+          startBtn.classList.remove('btn-danger');
+          showToast('Navegacion detenida');
+        } else {
+          var started = MapModule.startNavigation();
+          if (started) {
+            startBtn.textContent = 'Detener navegacion';
+            startBtn.classList.add('btn-danger');
+            showToast('Navegacion con voz activada');
+          }
         }
       });
     }
@@ -986,11 +993,17 @@ var App = (function () {
     var cancelBtn = document.getElementById('rp-cancel');
     if (cancelBtn) {
       cancelBtn.addEventListener('click', function () {
+        if (MapModule.isNavigating()) MapModule.stopNavigation();
         MapModule.clearAllRouteData();
         var mapInput = document.getElementById('map-search');
         if (mapInput) mapInput.value = '';
         var mapClear = document.getElementById('map-search-clear');
         if (mapClear) mapClear.style.display = 'none';
+        var rpBtn = document.getElementById('rp-start-nav');
+        if (rpBtn) {
+          rpBtn.textContent = 'Iniciar navegacion';
+          rpBtn.classList.remove('btn-danger');
+        }
       });
     }
 
@@ -999,13 +1012,17 @@ var App = (function () {
     if (rdCenterBtn) {
       rdCenterBtn.addEventListener('click', function () {
         navigate('#mapa');
-        var route = MapModule.getCurrentRoute();
-        if (route) {
-          setTimeout(function () {
-            MapModule.flyTo(route.originLat, route.originLng, 17);
-            showToast('Navegacion iniciada. Sigue la linea azul.');
-          }, 300);
-        }
+        setTimeout(function () {
+          var started = MapModule.startNavigation();
+          if (started) {
+            var rpBtn = document.getElementById('rp-start-nav');
+            if (rpBtn) {
+              rpBtn.textContent = 'Detener navegacion';
+              rpBtn.classList.add('btn-danger');
+            }
+            showToast('Navegacion con voz activada');
+          }
+        }, 400);
       });
     }
   }

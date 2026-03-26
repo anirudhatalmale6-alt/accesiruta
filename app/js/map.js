@@ -20,6 +20,14 @@ var MapModule = (function () {
   var routeReportMarkers = [];
   var currentRoute = null; // { origin, dest, distance, duration, score, geometry, steps, nearbyReports }
 
+  // Navigation state
+  var navigationActive = false;
+  var navigationWatchId = null;
+  var navigationArrow = null;
+  var currentHeading = 0;
+  var lastAnnouncedStep = -1;
+  var STEP_ANNOUNCE_RADIUS_M = 30; // Announce turn when within 30m
+
   // Marker color config per report type
   var MARKER_CONFIG = {
     rampa: { color: '#0EA5E9', emoji: '\u267F', label: 'Rampa' },
@@ -417,6 +425,190 @@ var MapModule = (function () {
     if (offlineEl) offlineEl.style.display = 'flex';
   }
 
+  /* =============================================
+     REAL-TIME NAVIGATION
+     ============================================= */
+
+  function createNavigationArrow(heading) {
+    return L.divIcon({
+      className: 'nav-arrow-marker',
+      html: '<div class="nav-arrow" style="transform:rotate(' + (heading || 0) + 'deg)">' +
+            '<svg viewBox="0 0 40 40" width="40" height="40">' +
+            '<circle cx="20" cy="20" r="18" fill="#0EA5E9" stroke="white" stroke-width="3"/>' +
+            '<polygon points="20,8 28,28 20,23 12,28" fill="white"/>' +
+            '</svg></div>',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+    });
+  }
+
+  function startNavigation() {
+    if (!currentRoute) return false;
+    if (navigationActive) return true;
+
+    navigationActive = true;
+    lastAnnouncedStep = -1;
+
+    // Replace user dot with navigation arrow
+    if (userMarker && map) map.removeLayer(userMarker);
+    if (userCircle && map) map.removeLayer(userCircle);
+
+    var pos = userPosition || { lat: currentRoute.originLat, lng: currentRoute.originLng };
+    navigationArrow = L.marker([pos.lat, pos.lng], {
+      icon: createNavigationArrow(0),
+      zIndexOffset: 1000,
+    }).addTo(map);
+
+    // Center on user with high zoom
+    map.setView([pos.lat, pos.lng], 18);
+
+    // Start GPS tracking
+    if ('geolocation' in navigator) {
+      navigationWatchId = navigator.geolocation.watchPosition(
+        onNavigationPositionUpdate,
+        function (err) {
+          console.warn('GPS error:', err.message);
+        },
+        { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+      );
+    }
+
+    // Announce start
+    speak('Navegacion iniciada. Sigue la linea azul.');
+
+    return true;
+  }
+
+  function stopNavigation() {
+    navigationActive = false;
+
+    // Stop GPS tracking
+    if (navigationWatchId !== null) {
+      navigator.geolocation.clearWatch(navigationWatchId);
+      navigationWatchId = null;
+    }
+
+    // Remove arrow, restore user dot
+    if (navigationArrow && map) {
+      map.removeLayer(navigationArrow);
+      navigationArrow = null;
+    }
+
+    var pos = userPosition || { lat: 40.4168, lng: -3.7038 };
+    userMarker = null;
+    userCircle = null;
+    addUserMarker(pos);
+
+    lastAnnouncedStep = -1;
+  }
+
+  function onNavigationPositionUpdate(position) {
+    if (!navigationActive || !currentRoute) return;
+
+    var lat = position.coords.latitude;
+    var lng = position.coords.longitude;
+    var heading = position.coords.heading;
+
+    // Update position
+    userPosition = { lat: lat, lng: lng };
+
+    // Update arrow position and heading
+    if (navigationArrow) {
+      navigationArrow.setLatLng([lat, lng]);
+      if (heading !== null && !isNaN(heading)) {
+        currentHeading = heading;
+        navigationArrow.setIcon(createNavigationArrow(heading));
+      }
+    }
+
+    // Auto-center map
+    if (map) {
+      map.panTo([lat, lng], { animate: true, duration: 0.5 });
+    }
+
+    // Check proximity to route steps for voice announcements
+    checkStepProximity(lat, lng);
+
+    // Check if arrived at destination
+    var distToDest = haversineDistance(lat, lng, currentRoute.destLat, currentRoute.destLng) * 1000;
+    if (distToDest < 25) {
+      speak('Has llegado a tu destino. ' + (currentRoute.destName || ''));
+      stopNavigation();
+    }
+  }
+
+  function checkStepProximity(lat, lng) {
+    if (!currentRoute || !currentRoute.steps) return;
+
+    // Find the route geometry points to determine which step we're near
+    var geometry = currentRoute.geometry;
+    if (!geometry || !geometry.length) return;
+
+    var steps = currentRoute.steps;
+    var cumDist = 0;
+    var stepStartIdx = 0;
+
+    for (var s = 0; s < steps.length; s++) {
+      if (s <= lastAnnouncedStep) {
+        // Skip already announced steps - advance the index
+        var stepDist = 0;
+        for (var i = stepStartIdx; i < geometry.length - 1 && stepDist < steps[s].distance; i++) {
+          stepDist += haversineDistance(geometry[i][1], geometry[i][0], geometry[i + 1][1], geometry[i + 1][0]) * 1000;
+          stepStartIdx = i + 1;
+        }
+        continue;
+      }
+
+      // Find the approximate position of this step's start
+      var stepLat = geometry[Math.min(stepStartIdx, geometry.length - 1)][1];
+      var stepLng = geometry[Math.min(stepStartIdx, geometry.length - 1)][0];
+
+      var distToStep = haversineDistance(lat, lng, stepLat, stepLng) * 1000;
+
+      if (distToStep < STEP_ANNOUNCE_RADIUS_M) {
+        lastAnnouncedStep = s;
+        speak(steps[s].instruction);
+        break;
+      }
+
+      // Move past this step in geometry
+      var stepDist2 = 0;
+      for (var j = stepStartIdx; j < geometry.length - 1 && stepDist2 < steps[s].distance; j++) {
+        stepDist2 += haversineDistance(geometry[j][1], geometry[j][0], geometry[j + 1][1], geometry[j + 1][0]) * 1000;
+        stepStartIdx = j + 1;
+      }
+    }
+  }
+
+  /* --- Text-to-Speech --- */
+  function speak(text) {
+    if (!('speechSynthesis' in window)) return;
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    var utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'es-ES';
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    // Try to find a Spanish voice
+    var voices = window.speechSynthesis.getVoices();
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].lang && voices[i].lang.indexOf('es') === 0) {
+        utterance.voice = voices[i];
+        break;
+      }
+    }
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function isNavigating() {
+    return navigationActive;
+  }
+
   /* --- Haversine --- */
   function haversineDistance(lat1, lng1, lat2, lng2) {
     var R = 6371;
@@ -448,6 +640,10 @@ var MapModule = (function () {
     getMap: getMap,
     getCurrentRoute: getCurrentRoute,
     setCurrentRoute: setCurrentRoute,
+    startNavigation: startNavigation,
+    stopNavigation: stopNavigation,
+    isNavigating: isNavigating,
+    speak: speak,
   };
 })();
 

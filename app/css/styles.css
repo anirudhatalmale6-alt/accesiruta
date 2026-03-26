@@ -2050,3 +2050,37 @@ body.font-size-xlarge {
     background: linear-gradient(135deg, #0EA5E9 0%, #0369A1 50%, #075985 100%);
   }
 }
+
+/* =====================
+   NAVIGATION ARROW
+   ===================== */
+.nav-arrow-marker {
+  background: none !important;
+  border: none !important;
+}
+
+.nav-arrow {
+  transition: transform 0.3s ease;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.3));
+}
+
+@keyframes navPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.nav-arrow svg circle {
+  animation: navPulse 2s infinite;
+}
+
+/* Danger button (stop navigation) */
+.btn-danger {
+  background: #EF4444 !important;
+  color: white !important;
+  border-color: #EF4444 !important;
+}
+
+.btn-danger:hover,
+.btn-danger:active {
+  background: #DC2626 !important;
+}
